@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  BucketName:
+    Type: String
+  ObjectKey:
+    Type: String
+  EnvType:
+    Description: Environment type.
+    Default: prod
+    Type: String
+    AllowedValues:
+    - prod
+    - test
+    ConstraintDescription: must specify prod or test.
+Resources:
+  jarBucket:
+    Type: AWS::S3::Bucket
+    Properties: {}
+  unzipFiles:
+    Type: Custom::copyLambdaFiles
+    DependsOn:
+    - jarBucket
+    Properties:
+      ServiceToken: !GetAtt [unzipFilesFunction, Arn]
+      filetoprocess: !Ref 'ObjectKey'
+  unzipFilesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Lambda function to prepare files
+      Code:
+        ZipFile: !Join ['', ['import cfnresponse
+
+              ', 'import boto3
+
+              ', 'from botocore.client import Config
+
+              ', 'import zipfile
+
+              ', 'def handler(event, context):
+
+              ', '   client = boto3.client(''s3'')
+
+              ', '   destinationbucket = ''', !Ref 'jarBucket', '''
+
+              ', '   if event[''RequestType''] != ''Delete'':
+
+              ', '      print event
+
+              ', '      s3 = boto3.client(''s3'', config=Config(signature_version=''s3v4''))
+
+              ', '      sourcebucket = ''', !Ref 'BucketName', '''
+
+              ', '      zipKey = ''', !Ref 'ObjectKey', '''
+
+              ', '      s3.download_file(sourcebucket, zipKey, ''/tmp/target.zip'')
+
+              ', '      zfile = zipfile.ZipFile(''/tmp/target.zip'', ''r'')
+
+              ', '      zfile.extractall(''/tmp/'')
+
+              ', '      zfile.close()
+
+              ', '      s3.upload_file(''/tmp/target/spark-demo-1.0.jar'', destinationbucket,
+              ''', !Ref 'ObjectKey', '.jar'')
+
+              ', '   else:
+
+              ', '      s3 = boto3.resource(''s3'')
+
+              ', '      bucket = s3.Bucket(destinationbucket)
+
+              ', '      for key in bucket.objects.all():
+
+              ', '         client.delete_object(Bucket=destinationbucket,  Key=key.key)
+
+              ', '   cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "CustomResourcePhysicalID")
+
+              ']]
+      Handler: index.handler
+      Role: !GetAtt [LambdaExecutionRole, Arn]
+      Runtime: python2.7
+      Timeout: 300
+  cleanVPC:
+    DependsOn: VPC
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: "index.lambda_handler"
+      Code: 
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          client = boto3.client('ec2')
+          ec2 = boto3.resource('ec2')
+          def deleteSecurityGroupRules(groupId):
+              sg = ec2.SecurityGroup(groupId)
+              if not sg.ip_permissions:
+                  print "no rules to eliminate for "+ groupId
+              else:     
+                  sg.revoke_ingress(IpPermissions=sg.ip_permissions)
+              if not sg.ip_permissions_egress:
+                  print "no egress rules to eliminate for "+ groupId
+              else:     
+                  sg.revoke_egress(IpPermissions=sg.ip_permissions_egress)
+          def deleteSecurityGroup(groupId):
+              client.delete_security_group(GroupId=groupId)
+          def lambda_handler(event, context):
+              if event['RequestType'] == 'Delete':
+                vpc= event['ResourceProperties']['vpcId']
+                response = client.describe_security_groups(Filters=[{'Name': 'vpc-id','Values': [vpc]}])
+                for group in response["SecurityGroups"]:
+                    if group["GroupName"] == "ElasticMapReduce-master" or group["GroupName"] == "ElasticMapReduce-slave":
+                        deleteSecurityGroupRules(group["GroupId"])
+                for group in response["SecurityGroups"]:
+                    if group["GroupName"] == "ElasticMapReduce-master" or group["GroupName"] == "ElasticMapReduce-slave":
+                        deleteSecurityGroup(group["GroupId"])                
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "CustomResourcePhysicalID")
+              return ''
+      Runtime: python2.7
+      Timeout: 300
+      Role: !GetAtt [LambdaExecutionRole, Arn]     
+  cleanVPCresource:
+    Type: Custom::cleanVPC
+    DependsOn: VPC
+    Properties:
+      vpcId: !Ref VPC
+      ServiceToken: !GetAtt cleanVPC.Arn
+  emrCluster:
+    Type: AWS::EMR::Cluster
+    DependsOn: cleanVPCresource
+    Properties:
+      Applications:
+      - Name: spark
+      Instances:
+        CoreInstanceGroup:
+          InstanceCount: 2
+          InstanceType: m4.large
+        MasterInstanceGroup:
+          InstanceCount: 1
+          InstanceType: m4.large
+        Ec2SubnetId: !Ref 'Subnet'
+      JobFlowRole: EMR_EC2_DefaultRole
+      Name: !Join ['', [demoCluster, !Ref 'EnvType']]
+      ReleaseLabel: emr-5.8.0
+      Tags:
+      - Key: DefaultJob
+        Value: !Join ['', ['s3://', !Ref 'jarBucket', /, !Ref 'ObjectKey', .jar]]
+      ServiceRole: EMR_DefaultRole
+      VisibleToAllUsers: true
+  VPC:
+    Type: AWS::EC2::VPC
+#    DeletionPolicy: Retain
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+      - Key: Application
+        Value: !Ref 'AWS::StackId'
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      CidrBlock: 10.0.0.0/24
+      Tags:
+      - Key: Application
+        Value: !Ref 'AWS::StackId'
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Application
+        Value: !Ref 'AWS::StackId'
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+      - Key: Application
+        Value: !Ref 'AWS::StackId'
+  Route:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref 'RouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'Subnet'
+      RouteTableId: !Ref 'RouteTable'
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: '*'
+            Resource: '*'
+Outputs:
+  ClusterName:
+    Value: !Join ['', [demoCluster, !Ref 'EnvType']]
+  Jar:
+    Value: !Join ['', ['s3://', !Ref 'jarBucket', /, !Ref 'ObjectKey', .jar]]
