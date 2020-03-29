@@ -196,8 +196,50 @@ The different cli commands:
 Examples:
 
 ```
+# filter workers
+spark-submit \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.sql.parquet.enableVectorizedReader=false \
+  target/scala-2.12/spark-app-1.0.jar filter-workers <workers-path> <output-path>
+
+# filter jobtickets
+spark-submit \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.sql.parquet.enableVectorizedReader=false \
+  target/scala-2.12/spark-app-1.0.jar filter-tickets <jobtickets-path> <output-path>
+
+# report 1
+spark-submit \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.sql.parquet.enableVectorizedReader=false \
+  target/scala-2.12/spark-app-1.0.jar report1 <filtered-worker-path> <filtered-jobtickets-path> <output-path>
+
+# report 2
+spark-submit \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.sql.parquet.enableVectorizedReader=false \
+  target/scala-2.12/spark-app-1.0.jar report2 <filtered-worker-path> <filtered-jobtickets-path> <stackrequests-path> <output-path>
+
+# report 3
+spark-submit \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.sql.parquet.enableVectorizedReader=false \
+  target/scala-2.12/spark-app-1.0.jar report3 <run-date> <jobstacks-path> <emptystacks-path> <output-path>
+```
+
+### Build instructions
+
+This project is built through sbt
 
 ```
+# compile
+sbt test:compile
+
+# build fat jar
+sbt assembly
+```
+
+The fat jar is located in `target/scala-2.12/spark-app-1.0.jar`
 
 ### Note: Lack of tests
 

@@ -6,6 +6,13 @@ import java.time.format.DateTimeParseException
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql._
 
+// Note: I am only using this to get access to a their version of the Either data type
+//       (Disjunction). The problem with scala's version of Either in 2.11 is you can't
+//       use it in a for comprehension. scala 2.12 has support for this in their Either
+//       type but it seems to be more common for spark to be deployed against scala 2.11
+//
+import scalaz._, Scalaz._
+
 sealed trait Command
 
 object Command {
@@ -89,13 +96,13 @@ object App {
           output <- parsePath(rawOutput).map(OutputPath)
         } yield Command.Report3(date, jobStackInput, emptyStackInput, output)
       case _ =>
-        Left(s"Unknown command '${args.mkString(" ")}'")
+        s"Unknown command '${args.mkString(" ")}'".left
         // TODO add help message
     }
     command.map(run) match {
-      case Left(message) =>
+      case -\/(message) =>
         sys.error(s"Process failed: $message")
-      case Right(()) =>
+      case \/-(()) =>
         ()
     }
   }
@@ -116,19 +123,19 @@ object App {
     }
   }
 
-  def parseDate(raw: String): Either[String, LocalDate] =
+  def parseDate(raw: String): Disjunction[String, LocalDate] =
     try {
-      Right(LocalDate.parse(raw))
+      LocalDate.parse(raw).right
     } catch {
       case e: DateTimeParseException =>
-        Left(s"Can not parse date '$raw' - ${e.getMessage}")
+        s"Can not parse date '$raw' - ${e.getMessage}".left
     }
 
-  def parsePath(raw: String): Either[String, Path] =
+  def parsePath(raw: String): Disjunction[String, Path] =
     try {
-      Right(new Path(raw))
+      new Path(raw).right
     } catch {
       case e: IllegalArgumentException =>
-        Left(s"Invalid path '$raw' - ${e.getMessage}")
+        s"Invalid path '$raw' - ${e.getMessage}".left
     }
 }
